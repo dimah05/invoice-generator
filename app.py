@@ -431,35 +431,45 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
     largeur_totaux = 75 * mm
     x_totaux = largeur - 15 * mm - largeur_totaux
 
-    def ligne_total(y, label, valeur, gras=False, fond=None):
-        if fond:
-            c.setFillColor(fond)
-            c.rect(x_totaux, y - 7 * mm, largeur_totaux, 7 * mm, fill=True, stroke=False)
-        c.setStrokeColor(colors.HexColor("#CCCCCC"))
+    def ligne_total(y, label, valeur, gras=False, symbole_separe=False):
+        # Colonne label (bleu clair) + colonne valeur (bleu clair aussi), séparées par une ligne
+        largeur_label = largeur_totaux * 0.55
+        c.setFillColor(COULEUR_CLAIRE)
+        c.rect(x_totaux, y - 7 * mm, largeur_totaux, 7 * mm, fill=True, stroke=False)
+        c.setStrokeColor(colors.HexColor("#AAAAAA"))
         c.setLineWidth(0.5)
         c.rect(x_totaux, y - 7 * mm, largeur_totaux, 7 * mm, fill=False, stroke=True)
-        c.setFillColor(COULEUR_PRINCIPALE if gras else COULEUR_GRISE)
+        c.line(x_totaux + largeur_label, y - 7 * mm, x_totaux + largeur_label, y)
+
+        c.setFillColor(COULEUR_PRINCIPALE if gras else colors.black)
         c.setFont("Helvetica-Bold" if gras else "Helvetica", 10 if gras else 9.5)
         c.drawString(x_totaux + 3 * mm, y - 5 * mm, label)
-        c.setFillColor(COULEUR_PRINCIPALE if gras else colors.black)
-        c.drawRightString(x_totaux + largeur_totaux - 3 * mm, y - 5 * mm, valeur)
 
-    ligne_total(y_totaux, "SUBTOTAL", f"{symbole}{sous_total:,.2f}")
-    ligne_total(y_totaux - 7 * mm, f"TAX ({taux_taxe:g}%)", f"{symbole}{montant_taxe:,.2f}")
-    ligne_total(y_totaux - 16 * mm, "TOTAL", f"{symbole}{total:,.2f}", gras=True, fond=COULEUR_CLAIRE)
+        if symbole_separe:
+            c.drawString(x_totaux + largeur_label + 3 * mm, y - 5 * mm, symbole)
+            c.drawRightString(x_totaux + largeur_totaux - 3 * mm, y - 5 * mm, valeur)
+        else:
+            c.drawRightString(x_totaux + largeur_totaux - 3 * mm, y - 5 * mm, valeur)
 
-    # ---------- MERCI + FOOTER (toujours sur la dernière page) ----------
+    ligne_total(y_totaux, "SUBTOTAL", f"{sous_total:,.2f}")
+    ligne_total(y_totaux - 7 * mm, f"TAX ({taux_taxe:g}%)", f"{montant_taxe:,.2f}")
+    ligne_total(y_totaux - 16 * mm, "TOTAL", f"{total:,.2f}", gras=True, symbole_separe=True)
+
+    # ---------- MERCI (aligné avec le bloc des totaux, comme sur le modèle) ----------
     c.setFillColor(COULEUR_PRINCIPALE)
-    c.setFont("Helvetica-Oblique", 13)
-    c.drawString(15 * mm, 32 * mm, "THANK YOU!")
+    c.setFont("Helvetica-Bold", 18)
+    centre_gauche = (15 * mm + (x_totaux - 10 * mm)) / 2
+    c.drawCentredString(centre_gauche, y_totaux - 11 * mm, "THANK YOU")
 
+    # ---------- FOOTER (toujours sur la dernière page) ----------
     c.setFillColor(COULEUR_GRISE)
     c.setFont("Helvetica-Oblique", 8)
     c.drawCentredString(largeur / 2, 20 * mm, "For questions concerning this invoice, please contact")
 
     c.setFillColor(COULEUR_PRINCIPALE)
     c.setFont("Helvetica-Bold", 9)
-    contact = " · ".join(filter(None, [
+    contact = ", ".join(filter(None, [
+        donnees_formulaire.get("entreprise", ""),
         donnees_formulaire.get("entreprise_telephone", ""),
         donnees_formulaire.get("entreprise_email", ""),
     ]))
