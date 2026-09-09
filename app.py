@@ -27,9 +27,9 @@ import io
 
 app = Flask(__name__)
 
-COULEUR_PRINCIPALE = colors.HexColor("#1F3B57")
+COULEUR_PRINCIPALE = colors.HexColor("#0070C0")
 COULEUR_GRISE = colors.HexColor("#666666")
-COULEUR_CLAIRE = colors.HexColor("#F5F5F5")
+COULEUR_CLAIRE = colors.HexColor("#D9E2F1")
 
 FICHIER_COMPTEUR = "compteur.json"
 FICHIER_HISTORIQUE = "factures.json"
@@ -115,6 +115,8 @@ FORMULAIRE_HTML = """
                     <input type="text" name="entreprise_email">
                 </div>
             </div>
+            <label>Website (optional)</label>
+            <input type="text" name="entreprise_site" placeholder="www.yoursite.com">
 
             <h2>Invoice details</h2>
             <div class="ligne2">
@@ -129,16 +131,24 @@ FORMULAIRE_HTML = """
             </div>
 
             <h2>Bill to</h2>
+            <label>ATTN (name/department, optional)</label>
+            <input type="text" name="client_attn">
             <label>Client name</label>
             <input type="text" name="client_nom" required>
             <label>Client address</label>
             <textarea name="client_adresse" rows="2"></textarea>
+            <label>Client phone (optional)</label>
+            <input type="text" name="client_telephone">
 
             <h2>Ship to (optional)</h2>
+            <label>ATTN (name/department, optional)</label>
+            <input type="text" name="expedie_attn">
             <label>Name</label>
             <input type="text" name="expedie_nom">
             <label>Address</label>
             <textarea name="expedie_adresse" rows="2"></textarea>
+            <label>Phone (optional)</label>
+            <input type="text" name="expedie_telephone">
 
             <h2>Items</h2>
             <table class="items" id="tableau-items">
@@ -270,6 +280,11 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
     c.setFont("Helvetica-Bold", 26)
     c.drawRightString(largeur - 15 * mm, hauteur - 28 * mm, "INVOICE")
 
+    # Ligne de séparation horizontale sous l'en-tête (logo / titre)
+    c.setStrokeColor(COULEUR_PRINCIPALE)
+    c.setLineWidth(1.2)
+    c.line(15 * mm, hauteur - 33 * mm, largeur - 15 * mm, hauteur - 33 * mm)
+
     # ---------- INFOS ENTREPRISE (colonne gauche) ----------
     lignes_entreprise = [donnees_formulaire.get("entreprise", "")]
     adresse = donnees_formulaire.get("entreprise_adresse", "")
@@ -318,14 +333,24 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
     x_droite = 15 * mm + largeur_demi + 10 * mm
 
     entete_section(x_gauche, y_bloc, largeur_demi, "BILL TO")
-    lignes_bill_to = [donnees_formulaire.get("client_nom", "")] + \
-        donnees_formulaire.get("client_adresse", "").splitlines()[:3]
+    lignes_bill_to = []
+    if donnees_formulaire.get("client_attn"):
+        lignes_bill_to.append(f"ATTN: {donnees_formulaire['client_attn']}")
+    lignes_bill_to.append(donnees_formulaire.get("client_nom", ""))
+    lignes_bill_to += donnees_formulaire.get("client_adresse", "").splitlines()[:2]
+    if donnees_formulaire.get("client_telephone"):
+        lignes_bill_to.append(donnees_formulaire["client_telephone"])
     dessiner_bloc_texte(c, x_gauche, y_bloc - 12 * mm, lignes_bill_to, taille=10)
 
     if donnees_formulaire.get("expedie_nom") or donnees_formulaire.get("expedie_adresse"):
         entete_section(x_droite, y_bloc, largeur_demi, "SHIP TO")
-        lignes_ship_to = [donnees_formulaire.get("expedie_nom", "")] + \
-            donnees_formulaire.get("expedie_adresse", "").splitlines()[:3]
+        lignes_ship_to = []
+        if donnees_formulaire.get("expedie_attn"):
+            lignes_ship_to.append(f"ATTN: {donnees_formulaire['expedie_attn']}")
+        lignes_ship_to.append(donnees_formulaire.get("expedie_nom", ""))
+        lignes_ship_to += donnees_formulaire.get("expedie_adresse", "").splitlines()[:2]
+        if donnees_formulaire.get("expedie_telephone"):
+            lignes_ship_to.append(donnees_formulaire["expedie_telephone"])
         dessiner_bloc_texte(c, x_droite, y_bloc - 12 * mm, lignes_ship_to, taille=10)
 
     # ---------- TABLEAU DES ARTICLES (avec pagination) ----------
@@ -356,7 +381,7 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
         dessiner_entete_tableau(y)
         return y - 8 * mm  # position juste sous l'en-tête, prête pour la 1ère ligne
 
-    y_table = y_bloc - 42 * mm
+    y_table = y_bloc - 46 * mm
     dessiner_entete_tableau(y_table)
     y_ligne = y_table
 
@@ -410,25 +435,41 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
         if fond:
             c.setFillColor(fond)
             c.rect(x_totaux, y - 7 * mm, largeur_totaux, 7 * mm, fill=True, stroke=False)
-        c.setFillColor(colors.white if fond else COULEUR_GRISE)
+        c.setStrokeColor(colors.HexColor("#CCCCCC"))
+        c.setLineWidth(0.5)
+        c.rect(x_totaux, y - 7 * mm, largeur_totaux, 7 * mm, fill=False, stroke=True)
+        c.setFillColor(COULEUR_PRINCIPALE if gras else COULEUR_GRISE)
         c.setFont("Helvetica-Bold" if gras else "Helvetica", 10 if gras else 9.5)
         c.drawString(x_totaux + 3 * mm, y - 5 * mm, label)
-        c.setFillColor(colors.white if fond else colors.black)
+        c.setFillColor(COULEUR_PRINCIPALE if gras else colors.black)
         c.drawRightString(x_totaux + largeur_totaux - 3 * mm, y - 5 * mm, valeur)
 
     ligne_total(y_totaux, "SUBTOTAL", f"{symbole}{sous_total:,.2f}")
     ligne_total(y_totaux - 7 * mm, f"TAX ({taux_taxe:g}%)", f"{symbole}{montant_taxe:,.2f}")
-    ligne_total(y_totaux - 16 * mm, "TOTAL", f"{symbole}{total:,.2f}", gras=True, fond=COULEUR_PRINCIPALE)
+    ligne_total(y_totaux - 16 * mm, "TOTAL", f"{symbole}{total:,.2f}", gras=True, fond=COULEUR_CLAIRE)
 
     # ---------- MERCI + FOOTER (toujours sur la dernière page) ----------
     c.setFillColor(COULEUR_PRINCIPALE)
     c.setFont("Helvetica-Oblique", 13)
-    c.drawString(15 * mm, 30 * mm, "THANK YOU!")
+    c.drawString(15 * mm, 32 * mm, "THANK YOU!")
 
     c.setFillColor(COULEUR_GRISE)
-    c.setFont("Helvetica", 8)
-    c.drawCentredString(largeur / 2, 15 * mm,
-                         f"Questions about this invoice? Contact {donnees_formulaire.get('entreprise_email', '')}")
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawCentredString(largeur / 2, 20 * mm, "For questions concerning this invoice, please contact")
+
+    c.setFillColor(COULEUR_PRINCIPALE)
+    c.setFont("Helvetica-Bold", 9)
+    contact = " · ".join(filter(None, [
+        donnees_formulaire.get("entreprise_telephone", ""),
+        donnees_formulaire.get("entreprise_email", ""),
+    ]))
+    c.drawCentredString(largeur / 2, 15 * mm, contact)
+
+    site = donnees_formulaire.get("entreprise_site", "")
+    if site:
+        c.setFillColor(COULEUR_GRISE)
+        c.setFont("Helvetica", 8)
+        c.drawCentredString(largeur / 2, 10 * mm, site)
 
     c.save()
     enregistrer_dans_historique(numero, donnees_formulaire.get("entreprise", ""),
