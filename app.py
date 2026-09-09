@@ -1,250 +1,463 @@
 """
-Générateur de facture - Étape 3 : version web avec Flask
-------------------------------------------------------------
-Au lieu de taper les infos dans le terminal, l'utilisateur remplit
-un formulaire dans son navigateur et télécharge directement le PDF.
+Générateur de facture - Étape 4 : logo, devise, mise en page pro
+---------------------------------------------------------------
+Nouveautés :
+- Upload du logo du client (affiché sur la facture)
+- Menu déroulant pour choisir la devise ($, €, £)
+- Mise en page inspirée d'un vrai modèle de facture pro
+  (n° facture, date, ID client, modalités, bill to / ship to,
+  tableau multi-lignes, sous-total, taxe, total)
 
-Pour lancer ce fichier chez toi :
+Pour lancer chez toi :
     pip install flask reportlab
     python3 app.py
-Puis ouvre ton navigateur sur : http://localhost:5000
+Puis : http://localhost:5000
 """
 
 from flask import Flask, request, render_template_string, send_file
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib import colors
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from datetime import date, timedelta
 import json
 import os
+import io
 
 app = Flask(__name__)
 
 COULEUR_PRINCIPALE = colors.HexColor("#1F3B57")
 COULEUR_GRISE = colors.HexColor("#666666")
+COULEUR_CLAIRE = colors.HexColor("#F5F5F5")
 
 FICHIER_COMPTEUR = "compteur.json"
 FICHIER_HISTORIQUE = "factures.json"
 DOSSIER_FACTURES = "factures_generees"
 
-# On crée le dossier de sortie s'il n'existe pas encore
 os.makedirs(DOSSIER_FACTURES, exist_ok=True)
+
+# Symboles affichés selon la devise choisie dans le formulaire
+SYMBOLES_DEVISE = {"USD": "$", "EUR": "€", "GBP": "£"}
 
 
 # ---------------------------------------------------------------
-# Le formulaire HTML. On le garde dans une simple chaîne de texte
-# pour rester dans un seul fichier Python, facile à lancer.
+# Formulaire HTML avec upload de logo, devise, et lignes dynamiques
 # ---------------------------------------------------------------
 FORMULAIRE_HTML = """
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Générateur de facture</title>
+    <title>Invoice Generator</title>
     <style>
-        body {
-            font-family: Helvetica, Arial, sans-serif;
-            background: #F2F4F7;
-            display: flex;
-            justify-content: center;
-            padding-top: 60px;
-        }
+        body { font-family: Helvetica, Arial, sans-serif; background: #F2F4F7; padding: 40px; }
         .carte {
-            background: white;
-            padding: 40px;
-            border-radius: 10px;
+            background: white; padding: 32px; border-radius: 10px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-            width: 380px;
+            max-width: 700px; margin: 0 auto;
         }
-        h1 { font-size: 20px; color: #1F3B57; margin-bottom: 20px; }
-        label { display: block; font-size: 13px; color: #666; margin-top: 14px; margin-bottom: 4px; }
-        input {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            font-size: 14px;
-            box-sizing: border-box;
+        h1 { font-size: 20px; color: #1F3B57; margin-bottom: 24px; }
+        h2 { font-size: 14px; color: #1F3B57; margin-top: 28px; margin-bottom: 10px; border-bottom: 2px solid #eee; padding-bottom: 6px; }
+        label { display: block; font-size: 12px; color: #666; margin-top: 10px; margin-bottom: 3px; }
+        input, select, textarea {
+            width: 100%; padding: 7px; border: 1px solid #ccc; border-radius: 5px;
+            font-size: 13px; box-sizing: border-box; font-family: inherit;
         }
-        button {
-            margin-top: 24px;
-            width: 100%;
-            padding: 10px;
-            background: #1F3B57;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            font-size: 15px;
-            cursor: pointer;
+        .ligne2 { display: flex; gap: 16px; }
+        .ligne2 > div { flex: 1; }
+        table.items { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        table.items th { font-size: 11px; color: #666; text-align: left; padding: 4px; }
+        table.items td { padding: 4px; }
+        table.items td.col-qty, table.items td.col-price { width: 90px; }
+        table.items td.col-remove { width: 30px; }
+        .btn-secondaire {
+            margin-top: 10px; background: white; color: #1F3B57;
+            border: 1px solid #1F3B57; padding: 6px 12px; border-radius: 5px;
+            cursor: pointer; font-size: 13px;
         }
-        button:hover { background: #16293e; }
+        button.remove-row { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 16px; }
+        button[type="submit"] {
+            margin-top: 28px; width: 100%; padding: 11px; background: #1F3B57;
+            color: white; border: none; border-radius: 5px; font-size: 15px; cursor: pointer;
+        }
+        button[type="submit"]:hover { background: #16293e; }
     </style>
 </head>
 <body>
     <div class="carte">
-        <h1>🧾 Générer une facture</h1>
-        <form action="/generer" method="post">
-            <label>Ton nom / entreprise</label>
+        <h1>🧾 Generate an invoice</h1>
+        <form action="/generer" method="post" enctype="multipart/form-data">
+
+            <h2>Branding</h2>
+            <label>Your logo (optional)</label>
+            <input type="file" name="logo" accept="image/*">
+
+            <label>Currency</label>
+            <select name="devise">
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="GBP">GBP (£)</option>
+            </select>
+
+            <h2>Your company</h2>
+            <label>Company name</label>
             <input type="text" name="entreprise" required>
+            <label>Address</label>
+            <textarea name="entreprise_adresse" rows="2"></textarea>
+            <div class="ligne2">
+                <div>
+                    <label>Phone</label>
+                    <input type="text" name="entreprise_telephone">
+                </div>
+                <div>
+                    <label>Email</label>
+                    <input type="text" name="entreprise_email">
+                </div>
+            </div>
 
-            <label>Nom du client</label>
-            <input type="text" name="client" required>
+            <h2>Invoice details</h2>
+            <div class="ligne2">
+                <div>
+                    <label>Client ID (optional)</label>
+                    <input type="text" name="client_id">
+                </div>
+                <div>
+                    <label>Terms (e.g. Net 30)</label>
+                    <input type="text" name="modalites" value="Net 30">
+                </div>
+            </div>
 
-            <label>Description de la prestation</label>
-            <input type="text" name="description" required>
+            <h2>Bill to</h2>
+            <label>Client name</label>
+            <input type="text" name="client_nom" required>
+            <label>Client address</label>
+            <textarea name="client_adresse" rows="2"></textarea>
 
-            <label>Montant (€)</label>
-            <input type="text" name="montant" required>
+            <h2>Ship to (optional)</h2>
+            <label>Name</label>
+            <input type="text" name="expedie_nom">
+            <label>Address</label>
+            <textarea name="expedie_adresse" rows="2"></textarea>
 
-            <button type="submit">Générer le PDF</button>
+            <h2>Items</h2>
+            <table class="items" id="tableau-items">
+                <thead>
+                    <tr>
+                        <th>Description</th>
+                        <th class="col-qty">Qty</th>
+                        <th class="col-price">Unit price</th>
+                        <th class="col-remove"></th>
+                    </tr>
+                </thead>
+                <tbody id="corps-tableau">
+                    <tr>
+                        <td><input type="text" name="description" required></td>
+                        <td class="col-qty"><input type="text" name="qty" value="1"></td>
+                        <td class="col-price"><input type="text" name="unit_price" required></td>
+                        <td class="col-remove"><button type="button" class="remove-row" onclick="supprimerLigne(this)">✕</button></td>
+                    </tr>
+                </tbody>
+            </table>
+            <button type="button" class="btn-secondaire" onclick="ajouterLigne()">+ Add line</button>
+
+            <label style="margin-top:20px;">Tax rate (%)</label>
+            <input type="text" name="taux_taxe" value="0">
+
+            <button type="submit">Generate PDF</button>
         </form>
     </div>
+
+    <script>
+        // Ajoute une nouvelle ligne d'article en clonant la première ligne du tableau
+        function ajouterLigne() {
+            const corps = document.getElementById('corps-tableau');
+            const nouvelle = corps.rows[0].cloneNode(true);
+            // On vide les champs de la copie pour ne pas dupliquer les valeurs
+            nouvelle.querySelectorAll('input').forEach(champ => {
+                champ.value = champ.name === 'qty' ? '1' : '';
+            });
+            corps.appendChild(nouvelle);
+        }
+
+        // Supprime une ligne (sauf s'il n'en reste qu'une seule)
+        function supprimerLigne(bouton) {
+            const corps = document.getElementById('corps-tableau');
+            if (corps.rows.length > 1) {
+                bouton.closest('tr').remove();
+            }
+        }
+    </script>
 </body>
 </html>
 """
 
 
 def generer_numero_facture():
-    """Numéro séquentiel F-ANNEE-0001, persisté dans compteur.json."""
     annee_actuelle = date.today().strftime("%Y")
-
     if os.path.exists(FICHIER_COMPTEUR):
         with open(FICHIER_COMPTEUR, "r", encoding="utf-8") as f:
             compteur = json.load(f)
     else:
         compteur = {"annee": annee_actuelle, "dernier_numero": 0}
-
     if compteur["annee"] != annee_actuelle:
         compteur = {"annee": annee_actuelle, "dernier_numero": 0}
-
     compteur["dernier_numero"] += 1
     with open(FICHIER_COMPTEUR, "w", encoding="utf-8") as f:
         json.dump(compteur, f, indent=2)
-
     return f"F-{annee_actuelle}-{str(compteur['dernier_numero']).zfill(4)}"
 
 
-def enregistrer_dans_historique(numero, entreprise, client, description, montant, chemin_pdf):
+def enregistrer_dans_historique(numero, entreprise, client, montant_total, chemin_pdf):
     if os.path.exists(FICHIER_HISTORIQUE):
         with open(FICHIER_HISTORIQUE, "r", encoding="utf-8") as f:
             historique = json.load(f)
     else:
         historique = []
-
     historique.append({
         "numero": numero,
-        "date_emission": date.today().strftime("%d/%m/%Y"),
+        "date_emission": date.today().strftime("%m/%d/%Y"),
         "entreprise": entreprise,
         "client": client,
-        "description": description,
-        "montant": montant,
+        "total": montant_total,
         "fichier_pdf": chemin_pdf,
     })
-
     with open(FICHIER_HISTORIQUE, "w", encoding="utf-8") as f:
         json.dump(historique, f, indent=2, ensure_ascii=False)
 
 
-def generer_pdf(entreprise, client, description, montant):
+def dessiner_bloc_texte(c, x, y, lignes, taille=10, interligne=5, couleur=colors.black, gras=False):
+    """Dessine plusieurs lignes de texte les unes sous les autres."""
+    c.setFillColor(couleur)
+    c.setFont("Helvetica-Bold" if gras else "Helvetica", taille)
+    for i, ligne in enumerate(lignes):
+        if ligne:
+            c.drawString(x, y - i * interligne * mm, ligne)
+
+
+def dessiner_logo(c, fichier_logo, x, y_bas, largeur_max, hauteur_max):
+    """Dessine le logo uploadé dans une zone donnée, en conservant ses proportions."""
+    if not fichier_logo or fichier_logo.filename == "":
+        return
+    try:
+        donnees = fichier_logo.read()
+        image = ImageReader(io.BytesIO(donnees))
+        largeur_img, hauteur_img = image.getSize()
+        echelle = min(largeur_max / largeur_img, hauteur_max / hauteur_img)
+        w, h = largeur_img * echelle, hauteur_img * echelle
+        c.drawImage(image, x, y_bas + (hauteur_max - h) / 2, width=w, height=h,
+                    mask="auto", preserveAspectRatio=True)
+    except Exception:
+        # Si le fichier n'est pas une image valide, on ignore simplement le logo
+        pass
+
+
+def generer_pdf(donnees_formulaire, fichier_logo, items):
+    devise = donnees_formulaire.get("devise", "USD")
+    symbole = SYMBOLES_DEVISE.get(devise, "$")
+
     numero = generer_numero_facture()
     chemin_pdf = os.path.join(DOSSIER_FACTURES, f"facture_{numero}.pdf")
 
     c = canvas.Canvas(chemin_pdf, pagesize=A4)
     largeur, hauteur = A4
 
-    date_emission = date.today()
-    date_echeance = date_emission + timedelta(days=30)
+    # ---------- LOGO + TITRE ----------
+    dessiner_logo(c, fichier_logo, x=15 * mm, y_bas=hauteur - 45 * mm,
+                  largeur_max=55 * mm, hauteur_max=25 * mm)
 
-    # En-tête
     c.setFillColor(COULEUR_PRINCIPALE)
-    c.rect(0, hauteur - 25 * mm, largeur, 25 * mm, fill=True, stroke=False)
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 22)
-    c.drawString(20 * mm, hauteur - 17 * mm, "FACTURE")
-    c.setFont("Helvetica", 11)
-    c.drawRightString(largeur - 20 * mm, hauteur - 12 * mm, entreprise)
-    c.drawRightString(largeur - 20 * mm, hauteur - 18 * mm, f"N° {numero}")
+    c.setFont("Helvetica-Bold", 26)
+    c.drawRightString(largeur - 15 * mm, hauteur - 28 * mm, "INVOICE")
 
-    # Bloc infos
-    y = hauteur - 45 * mm
-    c.setFillColor(COULEUR_GRISE)
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(20 * mm, y, "FACTURÉ À")
-    c.drawString(120 * mm, y, "DATE D'ÉMISSION")
-    c.drawString(120 * mm, y - 6 * mm, "DATE D'ÉCHÉANCE")
-    c.setFillColor(colors.black)
-    c.setFont("Helvetica", 11)
-    c.drawString(20 * mm, y - 7 * mm, client)
-    c.drawString(160 * mm, y, date_emission.strftime("%d/%m/%Y"))
-    c.drawString(160 * mm, y - 6 * mm, date_echeance.strftime("%d/%m/%Y"))
+    # ---------- INFOS ENTREPRISE (colonne gauche) ----------
+    lignes_entreprise = [donnees_formulaire.get("entreprise", "")]
+    adresse = donnees_formulaire.get("entreprise_adresse", "")
+    lignes_entreprise += adresse.splitlines()[:2]
+    lignes_entreprise.append(donnees_formulaire.get("entreprise_telephone", ""))
+    lignes_entreprise.append(donnees_formulaire.get("entreprise_email", ""))
+    dessiner_bloc_texte(c, 15 * mm, hauteur - 55 * mm,
+                         [lignes_entreprise[0]], taille=11, gras=True)
+    dessiner_bloc_texte(c, 15 * mm, hauteur - 60 * mm,
+                         lignes_entreprise[1:], taille=9.5, couleur=COULEUR_GRISE)
 
-    # Tableau
-    y_tableau = y - 25 * mm
-    hauteur_ligne = 10 * mm
+    # ---------- BOITES N° FACTURE / DATE / CLIENT ID / MODALITÉS ----------
+    def boite_info(x, y_haut, largeur_boite, label, valeur):
+        c.setFillColor(COULEUR_PRINCIPALE)
+        c.rect(x, y_haut - 7 * mm, largeur_boite, 7 * mm, fill=True, stroke=False)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 8.5)
+        c.drawString(x + 3 * mm, y_haut - 5 * mm, label)
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica", 10)
+        c.drawString(x + 3 * mm, y_haut - 13 * mm, str(valeur))
+
+    largeur_boite = 40 * mm
+    x_col1 = largeur - 15 * mm - 2 * largeur_boite
+    x_col2 = largeur - 15 * mm - largeur_boite
+
+    boite_info(x_col1, hauteur - 45 * mm, largeur_boite, "INVOICE #", numero)
+    boite_info(x_col2, hauteur - 45 * mm, largeur_boite, "DATE", date.today().strftime("%m/%d/%Y"))
+    boite_info(x_col1, hauteur - 63 * mm, largeur_boite, "CLIENT ID",
+               donnees_formulaire.get("client_id", "") or "—")
+    boite_info(x_col2, hauteur - 63 * mm, largeur_boite, "TERMS",
+               donnees_formulaire.get("modalites", "") or "—")
+
+    # ---------- BILL TO / SHIP TO ----------
+    y_bloc = hauteur - 95 * mm
+
+    def entete_section(x, y, largeur_bloc, titre):
+        c.setFillColor(COULEUR_PRINCIPALE)
+        c.rect(x, y - 7 * mm, largeur_bloc, 7 * mm, fill=True, stroke=False)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(x + 3 * mm, y - 5 * mm, titre)
+
+    largeur_demi = (largeur - 30 * mm - 10 * mm) / 2
+    x_gauche = 15 * mm
+    x_droite = 15 * mm + largeur_demi + 10 * mm
+
+    entete_section(x_gauche, y_bloc, largeur_demi, "BILL TO")
+    lignes_bill_to = [donnees_formulaire.get("client_nom", "")] + \
+        donnees_formulaire.get("client_adresse", "").splitlines()[:3]
+    dessiner_bloc_texte(c, x_gauche, y_bloc - 12 * mm, lignes_bill_to, taille=10)
+
+    if donnees_formulaire.get("expedie_nom") or donnees_formulaire.get("expedie_adresse"):
+        entete_section(x_droite, y_bloc, largeur_demi, "SHIP TO")
+        lignes_ship_to = [donnees_formulaire.get("expedie_nom", "")] + \
+            donnees_formulaire.get("expedie_adresse", "").splitlines()[:3]
+        dessiner_bloc_texte(c, x_droite, y_bloc - 12 * mm, lignes_ship_to, taille=10)
+
+    # ---------- TABLEAU DES ARTICLES (avec pagination) ----------
+    x_desc, x_qty, x_prix, x_montant = 15 * mm, largeur - 85 * mm, largeur - 60 * mm, largeur - 15 * mm
+
+    # Hauteur minimale qu'il faut garder en bas de page pour une ligne d'article.
+    # Si on descend en dessous, on passe à une nouvelle page plutôt que de
+    # dessiner par-dessus le pied de page.
+    LIMITE_BAS = 40 * mm
+
+    def dessiner_entete_tableau(y):
+        c.setFillColor(COULEUR_PRINCIPALE)
+        c.rect(15 * mm, y, largeur - 30 * mm, 8 * mm, fill=True, stroke=False)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(x_desc + 3 * mm, y + 2.7 * mm, "DESCRIPTION")
+        c.drawCentredString(x_qty, y + 2.7 * mm, "QTY")
+        c.drawRightString(x_prix, y + 2.7 * mm, "UNIT PRICE")
+        c.drawRightString(x_montant - 3 * mm, y + 2.7 * mm, "AMOUNT")
+
+    def nouvelle_page_articles():
+        """Démarre une nouvelle page et redessine l'en-tête du tableau en haut."""
+        c.showPage()
+        y = hauteur - 25 * mm
+        c.setFillColor(COULEUR_GRISE)
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(15 * mm, hauteur - 15 * mm, f"Invoice {numero} (continued)")
+        dessiner_entete_tableau(y)
+        return y - 8 * mm  # position juste sous l'en-tête, prête pour la 1ère ligne
+
+    y_table = y_bloc - 42 * mm
+    dessiner_entete_tableau(y_table)
+    y_ligne = y_table
+
+    sous_total = 0.0
+    for i, item in enumerate(items):
+        # Si la prochaine ligne ne tient plus au-dessus de la limite basse,
+        # on passe à une nouvelle page avant de la dessiner.
+        if y_ligne - 7 * mm < LIMITE_BAS:
+            y_ligne = nouvelle_page_articles()
+
+        y_ligne -= 7 * mm
+        if i % 2 == 1:
+            c.setFillColor(COULEUR_CLAIRE)
+            c.rect(15 * mm, y_ligne, largeur - 30 * mm, 7 * mm, fill=True, stroke=False)
+
+        try:
+            qte = float(item["qty"] or 0)
+            prix_unitaire = float(item["unit_price"] or 0)
+        except ValueError:
+            qte, prix_unitaire = 0, 0
+        montant_ligne = qte * prix_unitaire
+        sous_total += montant_ligne
+
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica", 9.5)
+        c.drawString(x_desc + 3 * mm, y_ligne + 2.3 * mm, item["description"])
+        c.drawCentredString(x_qty, y_ligne + 2.3 * mm, f"{qte:g}")
+        c.drawRightString(x_prix, y_ligne + 2.3 * mm, f"{symbole}{prix_unitaire:,.2f}")
+        c.drawRightString(x_montant - 3 * mm, y_ligne + 2.3 * mm, f"{symbole}{montant_ligne:,.2f}")
+
+    # ---------- TOTAUX ----------
+    try:
+        taux_taxe = float(donnees_formulaire.get("taux_taxe", 0) or 0)
+    except ValueError:
+        taux_taxe = 0
+    montant_taxe = sous_total * taux_taxe / 100
+    total = sous_total + montant_taxe
+
+    # Le bloc des totaux fait environ 27mm de haut (3 lignes + marge).
+    # S'il ne tient pas sous la dernière ligne d'article, nouvelle page.
+    HAUTEUR_TOTAUX = 27 * mm
+    if y_ligne - HAUTEUR_TOTAUX < LIMITE_BAS:
+        c.showPage()
+        y_ligne = hauteur - 30 * mm
+
+    y_totaux = y_ligne - 6 * mm
+    largeur_totaux = 75 * mm
+    x_totaux = largeur - 15 * mm - largeur_totaux
+
+    def ligne_total(y, label, valeur, gras=False, fond=None):
+        if fond:
+            c.setFillColor(fond)
+            c.rect(x_totaux, y - 7 * mm, largeur_totaux, 7 * mm, fill=True, stroke=False)
+        c.setFillColor(colors.white if fond else COULEUR_GRISE)
+        c.setFont("Helvetica-Bold" if gras else "Helvetica", 10 if gras else 9.5)
+        c.drawString(x_totaux + 3 * mm, y - 5 * mm, label)
+        c.setFillColor(colors.white if fond else colors.black)
+        c.drawRightString(x_totaux + largeur_totaux - 3 * mm, y - 5 * mm, valeur)
+
+    ligne_total(y_totaux, "SUBTOTAL", f"{symbole}{sous_total:,.2f}")
+    ligne_total(y_totaux - 7 * mm, f"TAX ({taux_taxe:g}%)", f"{symbole}{montant_taxe:,.2f}")
+    ligne_total(y_totaux - 16 * mm, "TOTAL", f"{symbole}{total:,.2f}", gras=True, fond=COULEUR_PRINCIPALE)
+
+    # ---------- MERCI + FOOTER (toujours sur la dernière page) ----------
     c.setFillColor(COULEUR_PRINCIPALE)
-    c.rect(20 * mm, y_tableau, largeur - 40 * mm, hauteur_ligne, fill=True, stroke=False)
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(23 * mm, y_tableau + 3.5 * mm, "DESCRIPTION")
-    c.drawRightString(largeur - 23 * mm, y_tableau + 3.5 * mm, "MONTANT")
+    c.setFont("Helvetica-Oblique", 13)
+    c.drawString(15 * mm, 30 * mm, "THANK YOU!")
 
-    y_ligne = y_tableau - hauteur_ligne
-    c.setFillColor(colors.HexColor("#F5F5F5"))
-    c.rect(20 * mm, y_ligne, largeur - 40 * mm, hauteur_ligne, fill=True, stroke=False)
-    c.setFillColor(colors.black)
-    c.setFont("Helvetica", 10)
-    c.drawString(23 * mm, y_ligne + 3.5 * mm, description)
-    c.drawRightString(largeur - 23 * mm, y_ligne + 3.5 * mm, f"{montant} EUR")
-
-    # Total
-    y_total = y_ligne - 12 * mm
-    c.setStrokeColor(COULEUR_PRINCIPALE)
-    c.setLineWidth(1)
-    c.line(120 * mm, y_total + 6 * mm, largeur - 20 * mm, y_total + 6 * mm)
-    c.setFont("Helvetica-Bold", 13)
-    c.setFillColor(COULEUR_PRINCIPALE)
-    c.drawString(120 * mm, y_total, "TOTAL À PAYER")
-    c.drawRightString(largeur - 20 * mm, y_total, f"{montant} EUR")
-
-    # Pied de page
     c.setFillColor(COULEUR_GRISE)
     c.setFont("Helvetica", 8)
-    c.drawCentredString(largeur / 2, 15 * mm, f"Merci pour votre confiance — {entreprise}")
+    c.drawCentredString(largeur / 2, 15 * mm,
+                         f"Questions about this invoice? Contact {donnees_formulaire.get('entreprise_email', '')}")
 
     c.save()
-    enregistrer_dans_historique(numero, entreprise, client, description, montant, chemin_pdf)
+    enregistrer_dans_historique(numero, donnees_formulaire.get("entreprise", ""),
+                                 donnees_formulaire.get("client_nom", ""), total, chemin_pdf)
     return chemin_pdf
 
 
-# ---------------------------------------------------------------
-# Routes Flask : ce sont les "pages" de notre mini site web
-# ---------------------------------------------------------------
-
 @app.route("/")
 def accueil():
-    """Affiche le formulaire quand on visite la page d'accueil."""
     return render_template_string(FORMULAIRE_HTML)
 
 
 @app.route("/generer", methods=["POST"])
 def generer():
-    """Reçoit les données du formulaire et renvoie le PDF à télécharger."""
-    entreprise = request.form["entreprise"]
-    client = request.form["client"]
-    description = request.form["description"]
-    montant = request.form["montant"]
+    donnees_formulaire = request.form.to_dict()
+    fichier_logo = request.files.get("logo")
 
-    chemin_pdf = generer_pdf(entreprise, client, description, montant)
+    descriptions = request.form.getlist("description")
+    qtes = request.form.getlist("qty")
+    prix = request.form.getlist("unit_price")
+    items = [
+        {"description": d, "qty": q, "unit_price": p}
+        for d, q, p in zip(descriptions, qtes, prix) if d.strip()
+    ]
 
-    # send_file renvoie le fichier directement au navigateur,
-    # qui proposera de le télécharger
+    chemin_pdf = generer_pdf(donnees_formulaire, fichier_logo, items)
     return send_file(chemin_pdf, as_attachment=True)
 
 
 if __name__ == "__main__":
-    # En local : port 5000 par défaut.
-    # En ligne (Render...) : la plateforme impose son propre port via
-    # la variable d'environnement PORT, donc on s'adapte automatiquement.
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
