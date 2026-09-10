@@ -272,9 +272,20 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
     c = canvas.Canvas(chemin_pdf, pagesize=A4)
     largeur, hauteur = A4
 
+    MARGE_CADRE = 8 * mm
+
+    def dessiner_cadre():
+        c.setStrokeColor(colors.HexColor("#999999"))
+        c.setLineWidth(0.8)
+        c.rect(MARGE_CADRE, MARGE_CADRE, largeur - 2 * MARGE_CADRE, hauteur - 2 * MARGE_CADRE,
+               fill=False, stroke=True)
+
+    dessiner_cadre()
+
     # ---------- LOGO + TITRE ----------
-    dessiner_logo(c, fichier_logo, x=15 * mm, y_bas=hauteur - 45 * mm,
-                  largeur_max=55 * mm, hauteur_max=25 * mm)
+    # Le logo est limité en hauteur pour ne jamais toucher la ligne de séparation en dessous
+    dessiner_logo(c, fichier_logo, x=15 * mm, y_bas=hauteur - 38 * mm,
+                  largeur_max=50 * mm, hauteur_max=18 * mm)
 
     c.setFillColor(COULEUR_PRINCIPALE)
     c.setFont("Helvetica-Bold", 26)
@@ -283,7 +294,7 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
     # Ligne de séparation horizontale sous l'en-tête (logo / titre)
     c.setStrokeColor(COULEUR_PRINCIPALE)
     c.setLineWidth(1.2)
-    c.line(15 * mm, hauteur - 33 * mm, largeur - 15 * mm, hauteur - 33 * mm)
+    c.line(15 * mm, hauteur - 44 * mm, largeur - 15 * mm, hauteur - 44 * mm)
 
     # ---------- INFOS ENTREPRISE (colonne gauche) ----------
     lignes_entreprise = [donnees_formulaire.get("entreprise", "")]
@@ -291,9 +302,9 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
     lignes_entreprise += adresse.splitlines()[:2]
     lignes_entreprise.append(donnees_formulaire.get("entreprise_telephone", ""))
     lignes_entreprise.append(donnees_formulaire.get("entreprise_email", ""))
-    dessiner_bloc_texte(c, 15 * mm, hauteur - 55 * mm,
+    dessiner_bloc_texte(c, 15 * mm, hauteur - 52 * mm,
                          [lignes_entreprise[0]], taille=11, gras=True)
-    dessiner_bloc_texte(c, 15 * mm, hauteur - 60 * mm,
+    dessiner_bloc_texte(c, 15 * mm, hauteur - 57 * mm,
                          lignes_entreprise[1:], taille=9.5, couleur=COULEUR_GRISE)
 
     # ---------- BOITES N° FACTURE / DATE / CLIENT ID / MODALITÉS ----------
@@ -311,11 +322,11 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
     x_col1 = largeur - 15 * mm - 2 * largeur_boite
     x_col2 = largeur - 15 * mm - largeur_boite
 
-    boite_info(x_col1, hauteur - 45 * mm, largeur_boite, "INVOICE #", numero)
-    boite_info(x_col2, hauteur - 45 * mm, largeur_boite, "DATE", date.today().strftime("%m/%d/%Y"))
-    boite_info(x_col1, hauteur - 63 * mm, largeur_boite, "CLIENT ID",
+    boite_info(x_col1, hauteur - 50 * mm, largeur_boite, "INVOICE #", numero)
+    boite_info(x_col2, hauteur - 50 * mm, largeur_boite, "DATE", date.today().strftime("%m/%d/%Y"))
+    boite_info(x_col1, hauteur - 68 * mm, largeur_boite, "CLIENT ID",
                donnees_formulaire.get("client_id", "") or "—")
-    boite_info(x_col2, hauteur - 63 * mm, largeur_boite, "TERMS",
+    boite_info(x_col2, hauteur - 68 * mm, largeur_boite, "TERMS",
                donnees_formulaire.get("modalites", "") or "—")
 
     # ---------- BILL TO / SHIP TO ----------
@@ -354,26 +365,35 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
         dessiner_bloc_texte(c, x_droite, y_bloc - 12 * mm, lignes_ship_to, taille=10)
 
     # ---------- TABLEAU DES ARTICLES (avec pagination) ----------
-    x_desc, x_qty, x_prix, x_montant = 15 * mm, largeur - 85 * mm, largeur - 60 * mm, largeur - 15 * mm
+    # Limites des 4 colonnes : Description | Qty | Unit price | Amount
+    B = [15 * mm, largeur - 90 * mm, largeur - 65 * mm, largeur - 35 * mm, largeur - 15 * mm]
 
-    # Hauteur minimale qu'il faut garder en bas de page pour une ligne d'article.
-    # Si on descend en dessous, on passe à une nouvelle page plutôt que de
-    # dessiner par-dessus le pied de page.
     LIMITE_BAS = 40 * mm
+
+    def dessiner_ligne_grille(y_haut, y_bas):
+        """Dessine les bordures d'une ligne du tableau (4 cellules)."""
+        c.setStrokeColor(colors.HexColor("#AAAAAA"))
+        c.setLineWidth(0.4)
+        for x in B:
+            c.line(x, y_bas, x, y_haut)
+        c.line(B[0], y_bas, B[-1], y_bas)
+        c.line(B[0], y_haut, B[-1], y_haut)
 
     def dessiner_entete_tableau(y):
         c.setFillColor(COULEUR_PRINCIPALE)
-        c.rect(15 * mm, y, largeur - 30 * mm, 8 * mm, fill=True, stroke=False)
+        c.rect(B[0], y, B[-1] - B[0], 8 * mm, fill=True, stroke=False)
+        dessiner_ligne_grille(y + 8 * mm, y)
         c.setFillColor(colors.white)
         c.setFont("Helvetica-Bold", 9)
-        c.drawString(x_desc + 3 * mm, y + 2.7 * mm, "DESCRIPTION")
-        c.drawCentredString(x_qty, y + 2.7 * mm, "QTY")
-        c.drawRightString(x_prix, y + 2.7 * mm, "UNIT PRICE")
-        c.drawRightString(x_montant - 3 * mm, y + 2.7 * mm, "AMOUNT")
+        c.drawString(B[0] + 3 * mm, y + 2.7 * mm, "DESCRIPTION")
+        c.drawCentredString((B[1] + B[2]) / 2, y + 2.7 * mm, "QTY")
+        c.drawRightString(B[3] - 3 * mm, y + 2.7 * mm, "UNIT PRICE")
+        c.drawRightString(B[4] - 3 * mm, y + 2.7 * mm, "AMOUNT")
 
     def nouvelle_page_articles():
-        """Démarre une nouvelle page et redessine l'en-tête du tableau en haut."""
+        """Démarre une nouvelle page et redessine le cadre + l'en-tête du tableau."""
         c.showPage()
+        dessiner_cadre()
         y = hauteur - 25 * mm
         c.setFillColor(COULEUR_GRISE)
         c.setFont("Helvetica-Oblique", 9)
@@ -392,10 +412,9 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
         if y_ligne - 7 * mm < LIMITE_BAS:
             y_ligne = nouvelle_page_articles()
 
+        y_haut_ligne = y_ligne
         y_ligne -= 7 * mm
-        if i % 2 == 1:
-            c.setFillColor(COULEUR_CLAIRE)
-            c.rect(15 * mm, y_ligne, largeur - 30 * mm, 7 * mm, fill=True, stroke=False)
+        dessiner_ligne_grille(y_haut_ligne, y_ligne)
 
         try:
             qte = float(item["qty"] or 0)
@@ -407,10 +426,10 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
 
         c.setFillColor(colors.black)
         c.setFont("Helvetica", 9.5)
-        c.drawString(x_desc + 3 * mm, y_ligne + 2.3 * mm, item["description"])
-        c.drawCentredString(x_qty, y_ligne + 2.3 * mm, f"{qte:g}")
-        c.drawRightString(x_prix, y_ligne + 2.3 * mm, f"{symbole}{prix_unitaire:,.2f}")
-        c.drawRightString(x_montant - 3 * mm, y_ligne + 2.3 * mm, f"{symbole}{montant_ligne:,.2f}")
+        c.drawString(B[0] + 3 * mm, y_ligne + 2.3 * mm, item["description"])
+        c.drawCentredString((B[1] + B[2]) / 2, y_ligne + 2.3 * mm, f"{qte:g}")
+        c.drawRightString(B[3] - 3 * mm, y_ligne + 2.3 * mm, f"{symbole}{prix_unitaire:,.2f}")
+        c.drawRightString(B[4] - 3 * mm, y_ligne + 2.3 * mm, f"{symbole}{montant_ligne:,.2f}")
 
     # ---------- TOTAUX ----------
     try:
@@ -425,6 +444,7 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
     HAUTEUR_TOTAUX = 27 * mm
     if y_ligne - HAUTEUR_TOTAUX < LIMITE_BAS:
         c.showPage()
+        dessiner_cadre()
         y_ligne = hauteur - 30 * mm
 
     y_totaux = y_ligne - 6 * mm
