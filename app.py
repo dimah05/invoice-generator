@@ -20,7 +20,7 @@ from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import json
 import os
 import io
@@ -285,7 +285,7 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
     # ---------- LOGO + TITRE ----------
     # Le logo est limité en hauteur pour ne jamais toucher la ligne de séparation en dessous
     dessiner_logo(c, fichier_logo, x=15 * mm, y_bas=hauteur - 38 * mm,
-                  largeur_max=50 * mm, hauteur_max=18 * mm)
+                  largeur_max=65 * mm, hauteur_max=26 * mm)
 
     c.setFillColor(COULEUR_PRINCIPALE)
     c.setFont("Helvetica-Bold", 26)
@@ -308,14 +308,14 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
                          lignes_entreprise[1:], taille=9.5, couleur=COULEUR_GRISE)
 
     # ---------- BOITES N° FACTURE / DATE / CLIENT ID / MODALITÉS ----------
-    def boite_info(x, y_haut, largeur_boite, label, valeur):
+    def boite_info(x, y_haut, largeur_boite, label, valeur, taille_valeur=10):
         c.setFillColor(COULEUR_PRINCIPALE)
         c.rect(x, y_haut - 7 * mm, largeur_boite, 7 * mm, fill=True, stroke=False)
         c.setFillColor(colors.white)
         c.setFont("Helvetica-Bold", 8.5)
         c.drawString(x + 3 * mm, y_haut - 5 * mm, label)
         c.setFillColor(colors.black)
-        c.setFont("Helvetica", 10)
+        c.setFont("Helvetica", taille_valeur)
         c.drawString(x + 3 * mm, y_haut - 13 * mm, str(valeur))
 
     largeur_boite = 40 * mm
@@ -323,7 +323,8 @@ def generer_pdf(donnees_formulaire, fichier_logo, items):
     x_col2 = largeur - 15 * mm - largeur_boite
 
     boite_info(x_col1, hauteur - 50 * mm, largeur_boite, "INVOICE #", numero)
-    boite_info(x_col2, hauteur - 50 * mm, largeur_boite, "DATE", date.today().strftime("%m/%d/%Y"))
+    boite_info(x_col2, hauteur - 50 * mm, largeur_boite, "DATE",
+               datetime.now().strftime("%m/%d/%Y %I:%M %p"), taille_valeur=8)
     boite_info(x_col1, hauteur - 68 * mm, largeur_boite, "CLIENT ID",
                donnees_formulaire.get("client_id", "") or "—")
     boite_info(x_col2, hauteur - 68 * mm, largeur_boite, "TERMS",
